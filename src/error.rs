@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use simplicity::elements;
 
-use crate::parse::{Identifier, Span, Type, UIntType};
+use crate::parse::{Identifier, JetName, Span, Type, UIntType};
 use crate::Rule;
 
 /// Helper trait to update a result with the affected span.
@@ -125,7 +125,7 @@ pub enum Error {
     Grammar(String),
     // TODO: Remove this error once Simfony has a type system
     CannotCompile(String),
-    JetDoesNotExist(Arc<str>),
+    JetDoesNotExist(JetName),
     TypeValueMismatch(Type),
     InvalidDecimal(UIntType),
     UnmatchedPattern(&'static str),

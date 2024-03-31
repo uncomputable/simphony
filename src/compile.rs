@@ -10,7 +10,7 @@ use crate::num::NonZeroPow2Usize;
 use crate::parse::{Pattern, SingleExpressionInner, Span, UIntType};
 use crate::{
     named::{ConstructExt, ProgExt},
-    parse::{Expression, ExpressionInner, FuncCall, FuncType, Program, Statement, Type},
+    parse::{Call, CallName, Expression, ExpressionInner, Program, Statement, Type},
     scope::GlobalScope,
     ProgNode,
 };
@@ -35,12 +35,12 @@ fn eval_blk(
             let right = eval_blk(stmts, scope, index + 1, last_expr)?;
             ProgNode::comp(left, right).with_span(assignment.span)
         }
-        Statement::FuncCall(func_call) => {
-            let left = func_call.eval(scope, None)?;
+        Statement::Call(call) => {
+            let left = call.eval(scope, None)?;
             let right = eval_blk(stmts, scope, index + 1, last_expr)?;
-            let pair = ProgNode::pair(left, right).with_span(func_call.span)?;
+            let pair = ProgNode::pair(left, right).with_span(call.span)?;
             let drop_iden = ProgNode::drop_(ProgNode::iden());
-            ProgNode::comp(pair, drop_iden).with_span(func_call.span)
+            ProgNode::comp(pair, drop_iden).with_span(call.span)
         }
     }
 }
@@ -51,29 +51,25 @@ impl Program {
     }
 }
 
-impl FuncCall {
+impl Call {
     pub fn eval(
         &self,
         scope: &mut GlobalScope,
         _reqd_ty: Option<&Type>,
     ) -> Result<ProgNode, RichError> {
-        let args = match self.args.is_empty() {
-            true => SingleExpressionInner::Unit,
-            false => SingleExpressionInner::Array(self.args.clone()),
-        };
-        let args_expr = args.eval(scope, None, self.span)?;
+        let args_expr = self.args.to_expr().eval(scope, None, self.span)?;
 
-        match &self.func_type {
-            FuncType::Jet(name) => {
-                let jet = Elements::from_str(name)
+        match &self.name {
+            CallName::Jet(name) => {
+                let jet = Elements::from_str(name.as_inner())
                     .map_err(|_| Error::JetDoesNotExist(name.clone()))
                     .with_span(self.span)?;
                 let jet_expr = ProgNode::jet(jet);
                 ProgNode::comp(args_expr, jet_expr).with_span(self.span)
             }
-            FuncType::BuiltIn(..) => unimplemented!("Builtins are not supported yet"),
-            FuncType::UnwrapLeft => {
-                debug_assert!(self.args.len() == 1);
+            CallName::BuiltIn(..) => unimplemented!("Builtins are not supported yet"),
+            CallName::UnwrapLeft => {
+                debug_assert!(self.args.as_ref().len() == 1);
                 let left_and_unit =
                     ProgNode::pair(args_expr, ProgNode::unit()).with_span(self.span)?;
                 let fail_cmr = Cmr::fail(FailEntropy::ZERO);
@@ -81,8 +77,8 @@ impl FuncCall {
                 let get_inner = ProgNode::assertl(take_iden, fail_cmr).with_span(self.span)?;
                 ProgNode::comp(left_and_unit, get_inner).with_span(self.span)
             }
-            FuncType::UnwrapRight | FuncType::Unwrap => {
-                debug_assert!(self.args.len() == 1);
+            CallName::UnwrapRight | CallName::Unwrap => {
+                debug_assert!(self.args.as_ref().len() == 1);
                 let right_and_unit =
                     ProgNode::pair(args_expr, ProgNode::unit()).with_span(self.span)?;
                 let fail_cmr = Cmr::fail(FailEntropy::ZERO);
@@ -159,7 +155,7 @@ impl SingleExpressionInner {
                 .get(&Pattern::Identifier(identifier.clone()))
                 .map_err(Error::UndefinedVariable)
                 .with_span(span)?,
-            SingleExpressionInner::FuncCall(call) => call.eval(scope, reqd_ty)?,
+            SingleExpressionInner::Call(call) => call.eval(scope, reqd_ty)?,
             SingleExpressionInner::Expression(expression) => expression.eval(scope, reqd_ty)?,
             SingleExpressionInner::Match {
                 scrutinee,
