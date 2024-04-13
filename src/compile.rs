@@ -154,10 +154,7 @@ impl SingleExpressionInner {
                 let value = bytes.to_simplicity();
                 ProgNode::comp(ProgNode::unit(), ProgNode::const_word(value)).with_span(span)?
             }
-            SingleExpressionInner::Witness(name) => {
-                scope.insert_witness(name.clone());
-                ProgNode::witness(name.as_inner().clone())
-            }
+            SingleExpressionInner::Witness(name) => ProgNode::witness(name.as_inner().clone()),
             SingleExpressionInner::Variable(identifier) => scope
                 .get(identifier)
                 .ok_or(Error::UndefinedVariable(identifier.clone()))
