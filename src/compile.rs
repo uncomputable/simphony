@@ -156,8 +156,8 @@ impl SingleExpressionInner {
             }
             SingleExpressionInner::Witness(name) => ProgNode::witness(name.as_inner().clone()),
             SingleExpressionInner::Variable(identifier) => scope
-                .get(identifier)
-                .ok_or(Error::UndefinedVariable(identifier.clone()))
+                .get(&Pattern::Identifier(identifier.clone()))
+                .map_err(Error::UndefinedVariable)
                 .with_span(span)?,
             SingleExpressionInner::FuncCall(call) => call.eval(scope, reqd_ty)?,
             SingleExpressionInner::Expression(expression) => expression.eval(scope, reqd_ty)?,
