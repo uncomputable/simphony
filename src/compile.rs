@@ -35,8 +35,9 @@ fn eval_blk(
             let right = eval_blk(stmts, scope, index + 1, last_expr)?;
             ProgNode::comp(left, right).with_span(assignment.span)
         }
-        Statement::Function(..) => {
+        Statement::Function(function) => {
             // Don't translate function until its call
+            scope.insert_function(function.clone());
             eval_blk(stmts, scope, index + 1, last_expr)
         }
         Statement::Call(call) => {
