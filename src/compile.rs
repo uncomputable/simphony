@@ -91,6 +91,16 @@ impl Call {
                 let get_inner = ProgNode::assertr(fail_cmr, take_iden).with_span(self.span)?;
                 ProgNode::comp(right_and_unit, get_inner).with_span(self.span)
             }
+            CallName::Function(name) => {
+                let function = scope
+                    .get_function(name)
+                    .ok_or(Error::UndefinedFunction(name.clone()))
+                    .with_span(self.span)?;
+                let params_pattern = function.params().to_pattern();
+                let mut params_scope = scope.to_child(params_pattern);
+                let body_expr = function.body().eval(&mut params_scope, None)?;
+                ProgNode::comp(args_expr, body_expr).with_span(self.span)
+            }
         }
     }
 }

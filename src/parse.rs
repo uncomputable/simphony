@@ -308,6 +308,8 @@ pub enum CallName {
     UnwrapRight,
     /// Some unwrap function
     Unwrap,
+    /// A function name.
+    Function(FunctionName),
     /// A builtin function name.
     BuiltIn(Arc<str>),
 }
@@ -968,7 +970,11 @@ impl PestParse for CallName {
             "unwrap" => Ok(CallName::Unwrap),
             _ => {
                 let inner = pair.into_inner().next().unwrap();
-                JetName::parse(inner).map(CallName::Jet)
+                match inner.as_rule() {
+                    Rule::jet => JetName::parse(inner).map(CallName::Jet),
+                    Rule::function_name => FunctionName::parse(inner).map(CallName::Function),
+                    _ => panic!("Corrupt grammar"),
+                }
             }
         }
     }

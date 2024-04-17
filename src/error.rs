@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use simplicity::elements;
 
-use crate::parse::{Identifier, JetName, Span, Type, UIntType};
+use crate::parse::{FunctionName, Identifier, JetName, Span, Type, UIntType};
 use crate::Rule;
 
 /// Helper trait to update a result with the affected span.
@@ -130,6 +130,7 @@ pub enum Error {
     InvalidDecimal(UIntType),
     UnmatchedPattern(&'static str),
     UndefinedVariable(Identifier),
+    UndefinedFunction(FunctionName),
 }
 
 #[rustfmt::skip]
@@ -183,6 +184,10 @@ impl fmt::Display for Error {
             Error::UndefinedVariable(identifier) => write!(
                 f,
                 "Variable `{identifier}` is not defined"
+            ),
+            Error::UndefinedFunction(name) => write!(
+                f,
+                "Function `{name}` is not defined"
             ),
         }
     }
