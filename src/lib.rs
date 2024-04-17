@@ -26,6 +26,7 @@ use simplicity::{
 pub extern crate simplicity;
 pub use simplicity::elements;
 
+use crate::parse::Pattern;
 use crate::{
     error::{RichError, WithFile},
     named::{NamedCommitNode, NamedExt},
@@ -43,7 +44,7 @@ pub fn compile_named(program: Arc<str>) -> Result<Arc<Node<Named<Commit<Elements
         .and_then(|mut pairs| Program::parse(pairs.next().unwrap()))
         .with_file(program.clone())?;
 
-    let mut scope = GlobalScope::new();
+    let mut scope = GlobalScope::new(Pattern::Ignore);
     let simplicity_program = simfony_program.eval(&mut scope).with_file(program)?;
     let named_commit = simplicity_program
         .finalize_types_main()

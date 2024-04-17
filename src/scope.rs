@@ -54,17 +54,11 @@ pub struct GlobalScope {
     variables: Vec<Vec<Pattern>>,
 }
 
-impl Default for GlobalScope {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl GlobalScope {
-    /// Creates a new [`GlobalScope`].
-    pub fn new() -> Self {
-        GlobalScope {
-            variables: vec![Vec::new()],
+    /// Create a new [`GlobalScope`] for an `input` of the given shape.
+    pub fn new(input: Pattern) -> Self {
+        Self {
+            variables: vec![vec![input]],
         }
     }
 
@@ -139,7 +133,9 @@ impl GlobalScope {
             .enumerate()
             .find_map(|(idx, pattern)| {
                 pattern.get_program(identifier).map(|mut expr| {
-                    expr = ProgNode::take(expr);
+                    if idx + 1 < self.variables.iter().map(|scope| scope.len()).sum() {
+                        expr = ProgNode::take(expr);
+                    }
                     for _ in 0..idx {
                         expr = ProgNode::drop_(expr);
                     }
