@@ -432,6 +432,20 @@ pub enum SingleExpressionInner {
     ///
     /// The exclusive upper bound on the list size is not known at this point
     List(Arc<[Expression]>),
+    /// List fold expression
+    ListFold {
+        /// Exclusive upper bound on list size.
+        // TODO: Remove once we have a typed Simfony syntax tree
+        bound: NonZeroPow2Usize,
+        /// List to fold.
+        list: Arc<Expression>,
+        /// Initial value of the accumulator.
+        acc: Arc<Expression>,
+        /// Value of the readonly context.
+        ctx: Option<Arc<Expression>>,
+        /// Name of function that is executed in each iteration.
+        name: FunctionName,
+    },
 }
 
 /// Valid unsigned decimal string.
@@ -1140,6 +1154,32 @@ impl PestParse for SingleExpression {
                     .map(|inner| Expression::parse(inner))
                     .collect::<Result<Arc<_>, _>>()?;
                 SingleExpressionInner::List(elements)
+            }
+            Rule::list_fold_expr => {
+                let mut it = inner_pair.into_inner();
+                let bound_pair = it.next().unwrap();
+                let bound = bound_pair
+                    .as_str()
+                    .parse::<NonZeroPow2Usize>()
+                    .map_err(|_| Error::ListBoundPow2)
+                    .with_span(&bound_pair)?;
+                let list = Expression::parse(it.next().unwrap()).map(Arc::new)?;
+                let acc = Expression::parse(it.next().unwrap()).map(Arc::new)?;
+                let (ctx, name) = match (it.next(), it.next()) {
+                    (Some(ctx_pair), Some(name_pair)) => (
+                        Some(Expression::parse(ctx_pair).map(Arc::new)?),
+                        FunctionName::parse(name_pair)?,
+                    ),
+                    (Some(name_pair), None) => (None, FunctionName::parse(name_pair)?),
+                    _ => panic!("Corrupt grammar"),
+                };
+                SingleExpressionInner::ListFold {
+                    bound,
+                    list,
+                    acc,
+                    ctx,
+                    name,
+                }
             }
             _ => unreachable!("Corrupt grammar"),
         };

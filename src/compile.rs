@@ -246,6 +246,7 @@ impl SingleExpressionInner {
 
                 partition.fold(process, ProgNode::pair_unwrap)
             }
+            SingleExpressionInner::ListFold { .. } => todo!(),
         };
         if let Some(reqd_ty) = reqd_ty {
             expr.arrow()
