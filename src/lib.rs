@@ -167,6 +167,7 @@ mod tests {
         _test_progs("./example_progs/list.simpl");
         _test_progs("./example_progs/function.simf");
         _test_progs("./example_progs/list_fold.simf");
+        _test_progs("./example_progs/for_while.simf");
     }
 
     fn _test_progs(file: &str) {

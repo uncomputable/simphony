@@ -1,0 +1,51 @@
+fn checked_add_32(el, acc) {
+    let (carry, sum) = jet_add_32(el, acc);
+    // assert!(carry == 0)
+    jet_verify(jet_complement_1(carry));
+    sum
+};
+
+// Double accumulator in each iteration
+fn double_acc(cnt, acc) {
+    Right(checked_add_32(acc, acc))
+};
+
+let a: Either<(), u32> = forWhile::<2>(1, double_acc);
+let expected: u32 = 4;
+jet_verify(jet_eq_32(expected, unwrap_right(a)));
+
+let b: Either<(), u32> = forWhile::<4>(1, double_acc);
+let expected: u32 = 16;
+jet_verify(jet_eq_32(expected, unwrap_right(b)));
+
+// Add counter to streaming hash and finalize when the loop exists
+fn hash_counter_8(cnt, acc) {
+    let new_acc = jet_sha_256_ctx_8_add_1(acc, cnt);
+    match jet_all_8(cnt) {
+        true => Left(jet_sha_256_ctx_8_finalize(new_acc)),
+        false => Right(new_acc),
+    }
+};
+
+// Hash bytes 0x00 to 0xff
+let ctx: (List<u8, 64>, (u64, u256)) = jet_sha_256_ctx_8_init();
+let c: Either<u256, (List<u8, 64>, (u64, u256))> = forWhile::<256>(ctx, hash_counter_8);
+let expected: u256 = 0x40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880;
+jet_verify(jet_eq_256(expected, unwrap_left(c)));
+
+fn checked_mul_32(a, b) {
+    let (prod_high, prod_low) = jet_multiply_32(a, b);
+    jet_verify(jet_is_zero_32(prod_high));
+    prod_low
+};
+
+fn mul_ctx(cnt, acc, ctx) {
+    Right(checked_mul_32(acc, ctx))
+};
+
+// Multiply the accumulator with a constant factor
+let accumulator: u32 = 1;
+let factor: u32 = 2;
+let product: Either<(), u32> = forWhile::<16>(accumulator, factor, mul_ctx);
+let expected = 65536;
+jet_verify(jet_eq_32(expected, unwrap_right(product)));
