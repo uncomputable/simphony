@@ -298,7 +298,55 @@ impl SingleExpressionInner {
 
                 ProgNode::comp(args_expr, fold_expr).with_span(span)?
             }
-            SingleExpressionInner::ForWhile { .. } => todo!(),
+            SingleExpressionInner::ForWhile {
+                bound,
+                acc,
+                ctx,
+                name,
+            } => {
+                let acc_expr = acc.eval(scope, None)?;
+                let ctx_expr = ctx
+                    .as_ref()
+                    .map(|e| e.eval(scope, None))
+                    .unwrap_or(Ok(ProgNode::unit()))?;
+                let args_expr = ProgNode::pair_unwrap(ctx_expr, acc_expr);
+
+                let function = scope
+                    .get_function(name)
+                    .ok_or(Error::UndefinedFunction(name.clone()))
+                    .with_span(span)?;
+                if ctx.is_none() {
+                    assert_eq!(
+                        function.params().as_ref().len(),
+                        2,
+                        "For-while expects binary function (counter, accumulator) → accumulator"
+                    );
+                } else {
+                    assert_eq!(
+                        function.params().as_ref().len(),
+                        3,
+                        "For-while expects ternary function (counter, accumulator, context) → accumulator"
+                    );
+                }
+                let cnt_var = Pattern::Identifier(function.params().as_ref()[0].clone());
+                let acc_var = Pattern::Identifier(function.params().as_ref()[1].clone());
+                let ctx_var = function
+                    .params()
+                    .as_ref()
+                    .get(2)
+                    .cloned()
+                    .map(Pattern::Identifier)
+                    .unwrap_or(Pattern::Ignore);
+                // for_while expects a Simplicity expression of type (C × 2^(2^(2^n))) × A → B + A
+                // Compile the function body with the corresponding pattern
+                // This results in a Simplicity expression with the required type
+                let params_pattern = Pattern::product(Pattern::product(ctx_var, cnt_var), acc_var);
+                let mut params_scope = scope.to_child(params_pattern);
+                let body_expr = function.body().eval(&mut params_scope, None)?;
+                let for_while_expr = for_while(bound.log2_log2(), body_expr).with_span(span)?;
+
+                ProgNode::comp(args_expr, for_while_expr).with_span(span)?
+            }
         };
         if let Some(reqd_ty) = reqd_ty {
             expr.arrow()
@@ -388,6 +436,51 @@ fn f_array(n: u32, f: ProgNode) -> Result<ProgNode, types::Error> {
                 ProgNode::pair(fst_output, ProgNode::i().i().h())?,
             )?;
             ProgNode::comp(snd_input, f_m)
+        }
+    }
+}
+
+// TODO: This function cannot fail if `f` is correctly typed
+/// Run a function at most `2^(2^n)` times and return the first successful output.
+///
+/// Function `f: (C × 2^(2^(2^n))) × A → B + A`
+/// takes a context of type `C`, a counter of type `2^(2^(2^n))` and a state of type `A`.
+/// `f` either returns an output of type `B` or an updated state.
+///
+/// The loop `forWhile f : C × A → B + A`
+/// takes a context and an initial state.
+/// The loop runs `f` at most `2^(2^n)` times and returns the first successful output (left value).
+/// The loop returns the final state (right value) if `f` never returns an output.
+fn for_while(n: u32, f: ProgNode) -> Result<ProgNode, types::Error> {
+    match n {
+        0 => {
+            let fst_input = ProgNode::pair(
+                ProgNode::pair(ProgNode::o().h(), ProgNode::_false())?,
+                ProgNode::i().h(),
+            )?;
+            let fst_output = ProgNode::comp(fst_input, f.clone())?;
+            let case_input = ProgNode::pair(fst_output, ProgNode::o().h())?;
+            let case_left = ProgNode::injl(ProgNode::o().h());
+            let snd_input = ProgNode::pair(
+                ProgNode::pair(ProgNode::i().h(), ProgNode::_true())?,
+                ProgNode::o().h(),
+            )?;
+            let snd_output = ProgNode::comp(snd_input, f)?;
+            let case_output = ProgNode::case(case_left, snd_output)?;
+            ProgNode::comp(case_input, case_output)
+        }
+        m_plus_one => {
+            let m = m_plus_one - 1;
+            let adapter = ProgNode::pair(
+                ProgNode::pair(
+                    ProgNode::o().o().o().h(),
+                    ProgNode::pair(ProgNode::o().o().i().h(), ProgNode::o().i().h())?,
+                )?,
+                ProgNode::i().h(),
+            )?;
+            let adapted_f = ProgNode::comp(adapter, f)?;
+            let inner_loop = for_while(m, adapted_f)?;
+            for_while(m, inner_loop)
         }
     }
 }
