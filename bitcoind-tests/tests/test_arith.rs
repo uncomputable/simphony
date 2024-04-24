@@ -7,9 +7,9 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use ::secp256k1::XOnlyPublicKey;
-use s_lang::elements::taproot::{TaprootBuilder, LeafVersion};
-use s_lang::elements;
+use secp256k1::XOnlyPublicKey;
+use simfony::elements::taproot::{TaprootBuilder, LeafVersion};
+use simfony::elements;
 
 use elements::pset::PartiallySignedTransaction as Psbt;
 use elements::{
@@ -44,7 +44,7 @@ pub fn test_simplicity(cl: &ElementsD, prog: &str, witness_file: &str) {
     let program_str = std::fs::read_to_string(program_path)
         .map(Arc::<str>::from)
         .unwrap();
-    let commit_prog = s_lang::compile(program_str.clone()).unwrap();
+    let commit_prog = simfony::compile(program_str.clone()).unwrap();
     let builder = TaprootBuilder::new();
     let script = elements::script::Script::from(commit_prog.cmr().as_ref().to_vec());
     let script_ver = (script, LeafVersion::from_u8(0xbe).unwrap());
@@ -76,7 +76,7 @@ pub fn test_simplicity(cl: &ElementsD, prog: &str, witness_file: &str) {
     psbt.add_output(psbt::Output::from_txout(out));
     let fee_out = TxOut::new_fee(3_000, witness_utxo.asset.explicit().unwrap());
     psbt.add_output(psbt::Output::from_txout(fee_out));
-    let redeem_prog = s_lang::satisfy(program_str, witness_file).unwrap();
+    let redeem_prog = simfony::satisfy(program_str, witness_file).unwrap();
     psbt.inputs_mut()[0].final_script_witness =
     Some(vec![
         redeem_prog.encode_to_vec(),

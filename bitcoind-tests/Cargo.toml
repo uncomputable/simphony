@@ -7,7 +7,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-s-lang = { path = ".." }
+simfony = { path = ".." }
 elementsd = { version = "0.8.0" }
 actual-rand = { package = "rand", version = "0.8.4" }
 secp256k1 = { version = "0.28.0", features = ["rand-std"] }

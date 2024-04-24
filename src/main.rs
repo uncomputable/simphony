@@ -4,7 +4,7 @@ use std::sync::Arc;
 use base64::display::Base64Display;
 use base64::engine::general_purpose::STANDARD;
 
-use s_lang::{compile, satisfy};
+use simfony::{compile, satisfy};
 
 fn main() {
     if let Err(error) = run() {
