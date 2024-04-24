@@ -1,10 +1,12 @@
 use std::env;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use base64::display::Base64Display;
 use base64::engine::general_purpose::STANDARD;
 
-use simfony::{compile, satisfy};
+use simfony::named::NamedExt;
+use simfony::{Compiler, Witness};
 
 fn main() {
     if let Err(error) = run() {
@@ -19,31 +21,38 @@ fn run() -> Result<(), String> {
 
     // Check if at least two arguments are provided.
     if args.len() < 2 {
-        println!("Usage: {} <prog.simpl> [sig.wit (optional)]", args[0]);
+        println!("Usage: {} <prog.simf> [sig.wit]", args[0]);
         println!("If no witness file is provided, the program will be compiled and printed.");
         println!("If a witness file is provided, the program will be satisfied and printed.");
         return Ok(());
     }
 
     // Extract the first argument (arg1).
-    let program_file = &args[1];
-    let program_path = std::path::Path::new(program_file);
+    let program_path = std::path::Path::new(&args[1]);
     let program_str = std::fs::read_to_string(program_path)
         .map(Arc::<str>::from)
-        .unwrap();
+        .map_err(|e| format!("Cannot open program: {e}"))?;
 
     // Check if a second argument (arg2) is provided.
     if args.len() >= 3 {
-        let witness_file = &args[2];
-        let wit_path = std::path::Path::new(witness_file);
-        let res = satisfy(program_str, wit_path).unwrap();
-        let redeem_bytes = res.encode_to_vec();
+        let witness_path = std::path::Path::new(&args[2]);
+        let witness_str = std::fs::read_to_string(witness_path)
+            .map_err(|e| format!("Cannot open witness: {e}"))?;
+        let witness =
+            Witness::from_str(&witness_str).map_err(|e| format!("Cannot parse witness: {e}"))?;
+
+        let redeem = Compiler::new()
+            .with_program(program_str)
+            .with_witness(witness)
+            .get_redeem()?;
+        let redeem_bytes = redeem.encode_to_vec();
         println!("{}", Base64Display::new(&redeem_bytes, &STANDARD));
     } else {
-        // No second argument is provided. Just compile the program.
-        let prog = compile(program_str)?;
-        let res = prog.encode_to_vec();
-        println!("{}", Base64Display::new(&res, &STANDARD));
+        let named_commit = Compiler::new()
+            .with_program(program_str)
+            .get_named_commit()?;
+        let commit_bytes = named_commit.to_commit_node().encode_to_vec();
+        println!("{}", Base64Display::new(&commit_bytes, &STANDARD));
     }
 
     Ok(())

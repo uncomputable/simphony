@@ -12,7 +12,7 @@ pub mod parse;
 pub mod scope;
 mod util;
 
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use named::{ConstructExt, Named};
 use pest::Parser;
@@ -21,7 +21,7 @@ use simplicity::{
     dag::{NoSharing, PostOrderIterItem},
     jet::Elements,
     node::{Commit, Converter, Inner, Node, Redeem, RedeemData},
-    BitIter, CommitNode, RedeemNode,
+    BitIter, RedeemNode,
 };
 
 pub extern crate simplicity;
@@ -39,111 +39,159 @@ use crate::{
 #[grammar = "minimal.pest"]
 pub struct IdentParser;
 
-pub fn compile_named(program: Arc<str>) -> Result<Arc<Node<Named<Commit<Elements>>>>, String> {
-    let simfony_program = IdentParser::parse(Rule::program, &program)
-        .map_err(RichError::from)
-        .and_then(|mut pairs| Program::parse(pairs.next().unwrap()))
-        .with_file(program.clone())?;
+pub struct Empty;
 
-    let mut scope = GlobalScope::new(Pattern::Ignore);
-    let simplicity_program = simfony_program.eval(&mut scope).with_file(program)?;
-    let named_commit = simplicity_program
-        .finalize_types_main()
-        .expect("Type check error");
-    Ok(named_commit)
+pub struct WithProgram(Arc<str>);
+
+pub struct WithWitness(Witness);
+
+pub struct Compiler<A, B> {
+    program: A,
+    witness: B,
 }
 
-pub fn compile(file: Arc<str>) -> Result<CommitNode<Elements>, String> {
-    let named_commit = compile_named(file)?;
-    Ok(Arc::try_unwrap(named_commit.to_commit_node()).unwrap())
+impl Compiler<Empty, Empty> {
+    pub const fn new() -> Self {
+        Compiler {
+            program: Empty,
+            witness: Empty,
+        }
+    }
 }
 
-pub fn satisfy(program: Arc<str>, wit_file: &Path) -> Result<RedeemNode<Elements>, String> {
-    #[derive(serde::Serialize, serde::Deserialize)]
-    #[serde(transparent)]
-    struct WitFileData {
-        map: HashMap<String, String>,
+impl<A, B> Compiler<A, B> {
+    pub fn with_program(self, program_str: Arc<str>) -> Compiler<WithProgram, B> {
+        Compiler {
+            program: WithProgram(program_str),
+            witness: self.witness,
+        }
     }
 
-    impl Converter<Named<Commit<Elements>>, Redeem<Elements>> for WitFileData {
-        type Error = ();
+    pub fn with_witness(self, witness: Witness) -> Compiler<A, WithWitness> {
+        Compiler {
+            program: self.program,
+            witness: WithWitness(witness),
+        }
+    }
+}
 
-        fn convert_witness(
-            &mut self,
-            data: &PostOrderIterItem<&NamedCommitNode>,
-            _witness: &<Named<Commit<Elements>> as simplicity::node::Marker>::Witness,
-        ) -> Result<<Redeem<Elements> as simplicity::node::Marker>::Witness, Self::Error> {
-            let key = data.node.name();
-            let ty = &data.node.arrow().target;
-            match self.map.get(key.as_ref()) {
-                Some(wit) => {
-                    let bytes: Vec<u8> = hex_conservative::FromHex::from_hex(wit).unwrap();
-                    let total_bit_len = bytes.len() * 8;
-                    let mut bit_iter = BitIter::new(bytes.into_iter());
-                    let value = bit_iter.read_value(&data.node.arrow().target);
-                    let v = match value {
-                        Ok(v) => v,
-                        Err(e) => panic!("Error reading witness: {:?}", e),
-                    };
-                    // TODO: Make sure that remaining iterator is empty or all zeros till the specified remaining len.
-                    let bit_len = ty.bit_width();
-                    let remaining = total_bit_len - bit_len;
-                    assert!(remaining < 8);
-                    for _ in 0..remaining {
-                        assert!(!bit_iter.next().unwrap());
-                    }
-                    assert!(bit_iter.next().is_none());
-                    Ok(v)
+impl<B> Compiler<WithProgram, B> {
+    /// Parse a Simfony program from a string and
+    /// compile to a Simplicity program without witness information.
+    pub fn get_named_commit(&self) -> Result<Arc<Node<Named<Commit<Elements>>>>, String> {
+        let simfony_program = IdentParser::parse(Rule::program, &self.program.0)
+            .map_err(RichError::from)
+            .and_then(|mut pairs| Program::parse(pairs.next().unwrap()))
+            .with_file(self.program.0.clone())?;
+        let mut scope = GlobalScope::new(Pattern::Ignore);
+        let simplicity_program = simfony_program
+            .eval(&mut scope)
+            .with_file(self.program.0.clone())?;
+        let named_commit = simplicity_program
+            .finalize_types_main()
+            .expect("Type check error");
+        Ok(named_commit)
+    }
+}
+
+impl Compiler<WithProgram, WithWitness> {
+    pub fn get_redeem(&self) -> Result<Arc<RedeemNode<Elements>>, String> {
+        let named_commit = self.get_named_commit()?;
+        let redeem = named_commit
+            .convert::<NoSharing, Redeem<Elements>, _>(&mut &self.witness.0)
+            .unwrap();
+        Ok(redeem)
+    }
+}
+
+#[derive(Debug, Clone, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct Witness {
+    map: HashMap<String, String>,
+}
+
+impl<'a, S: ToString> FromIterator<&'a (S, S)> for Witness {
+    fn from_iter<T: IntoIterator<Item = &'a (S, S)>>(iter: T) -> Self {
+        Self {
+            map: HashMap::from_iter(
+                iter.into_iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string())),
+            ),
+        }
+    }
+}
+
+impl std::str::FromStr for Witness {
+    type Err = serde_json::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let map = serde_json::from_str::<HashMap<String, String>>(s)?;
+        Ok(Witness { map })
+    }
+}
+
+impl<'a> Converter<Named<Commit<Elements>>, Redeem<Elements>> for &'a Witness {
+    type Error = ();
+
+    fn convert_witness(
+        &mut self,
+        data: &PostOrderIterItem<&NamedCommitNode>,
+        _witness: &<Named<Commit<Elements>> as simplicity::node::Marker>::Witness,
+    ) -> Result<<Redeem<Elements> as simplicity::node::Marker>::Witness, Self::Error> {
+        let key = data.node.name();
+        let ty = &data.node.arrow().target;
+        match self.map.get(key.as_ref()) {
+            Some(wit) => {
+                let bytes: Vec<u8> = hex_conservative::FromHex::from_hex(wit).unwrap();
+                let total_bit_len = bytes.len() * 8;
+                let mut bit_iter = BitIter::new(bytes.into_iter());
+                let value = bit_iter.read_value(&data.node.arrow().target);
+                let v = match value {
+                    Ok(v) => v,
+                    Err(e) => panic!("Error reading witness: {:?}", e),
+                };
+                // TODO: Make sure that remaining iterator is empty or all zeros till the specified remaining len.
+                let bit_len = ty.bit_width();
+                let remaining = total_bit_len - bit_len;
+                assert!(remaining < 8);
+                for _ in 0..remaining {
+                    assert!(!bit_iter.next().unwrap());
                 }
-                None => panic!("Value not found{}", key),
+                assert!(bit_iter.next().is_none());
+                Ok(v)
             }
-        }
-
-        fn convert_disconnect(
-            &mut self,
-            _data: &PostOrderIterItem<&NamedCommitNode>,
-            _maybe_converted: Option<&Arc<simplicity::node::Node<Redeem<Elements>>>>,
-            _disconnect: &<Named<Commit<Elements>> as simplicity::node::Marker>::Disconnect,
-        ) -> Result<<Redeem<Elements> as simplicity::node::Marker>::Disconnect, Self::Error>
-        {
-            todo!()
-        }
-
-        fn convert_data(
-            &mut self,
-            data: &PostOrderIterItem<&NamedCommitNode>,
-            inner: Inner<
-                &Arc<simplicity::node::Node<Redeem<Elements>>>,
-                <Redeem<Elements> as simplicity::node::Marker>::Jet,
-                &<Redeem<Elements> as simplicity::node::Marker>::Disconnect,
-                &<Redeem<Elements> as simplicity::node::Marker>::Witness,
-            >,
-        ) -> Result<<Redeem<Elements> as simplicity::node::Marker>::CachedData, Self::Error>
-        {
-            let converted_data = inner
-                .map(|node| node.cached_data())
-                .map_disconnect(|node| node.cached_data())
-                .map_witness(Arc::clone);
-            Ok(Arc::new(RedeemData::new(
-                data.node.arrow().shallow_clone(),
-                converted_data,
-            )))
+            None => panic!("Value not found `{}`", key),
         }
     }
 
-    let commit_node = compile_named(program)?;
-    let simplicity_prog =
-        Arc::<_>::try_unwrap(commit_node).expect("Only one reference to commit node");
+    fn convert_disconnect(
+        &mut self,
+        _data: &PostOrderIterItem<&NamedCommitNode>,
+        _maybe_converted: Option<&Arc<Node<Redeem<Elements>>>>,
+        _disconnect: &<Named<Commit<Elements>> as simplicity::node::Marker>::Disconnect,
+    ) -> Result<<Redeem<Elements> as simplicity::node::Marker>::Disconnect, Self::Error> {
+        todo!()
+    }
 
-    let file = std::fs::File::open(wit_file).expect("Error opening witness file");
-    let rdr = std::io::BufReader::new(file);
-    let mut wit_data: WitFileData =
-        serde_json::from_reader(rdr).expect("Error reading witness file");
-
-    let redeem_prog = simplicity_prog
-        .convert::<NoSharing, Redeem<Elements>, _>(&mut wit_data)
-        .unwrap();
-    Ok(Arc::try_unwrap(redeem_prog).unwrap())
+    fn convert_data(
+        &mut self,
+        data: &PostOrderIterItem<&NamedCommitNode>,
+        inner: Inner<
+            &Arc<Node<Redeem<Elements>>>,
+            <Redeem<Elements> as simplicity::node::Marker>::Jet,
+            &<Redeem<Elements> as simplicity::node::Marker>::Disconnect,
+            &<Redeem<Elements> as simplicity::node::Marker>::Witness,
+        >,
+    ) -> Result<<Redeem<Elements> as simplicity::node::Marker>::CachedData, Self::Error> {
+        let converted_data = inner
+            .map(|node| node.cached_data())
+            .map_disconnect(|node| node.cached_data())
+            .map_witness(Arc::clone);
+        Ok(Arc::new(RedeemData::new(
+            data.node.arrow().shallow_clone(),
+            converted_data,
+        )))
+    }
 }
 
 #[cfg(test)]
@@ -151,90 +199,75 @@ mod tests {
     use base64::display::Base64Display;
     use base64::engine::general_purpose::STANDARD;
     use simplicity::{encode, BitMachine, BitWriter, Cmr, Value};
+    use std::str::FromStr;
 
     use crate::{named::ProgExt, *};
 
     #[test]
     fn test_progs() {
-        _test_progs("./example_progs/test.simpl");
-        _test_progs("./example_progs/assertr.simpl");
-        _test_progs("./example_progs/scopes.simpl");
-        _test_progs("./example_progs/nesting.simpl");
-        _test_progs("./example_progs/add.simpl");
-        _test_progs("./example_progs/cat.simpl");
-        _test_progs("./example_progs/match.simpl");
-        _test_progs("./example_progs/array.simpl");
-        _test_progs("./example_progs/list.simpl");
-        _test_progs("./example_progs/function.simf");
-        _test_progs("./example_progs/list_fold.simf");
-        _test_progs("./example_progs/for_while.simf");
+        Test::from_program("./example_progs/test.simpl")
+            .with_witness("./example_progs/test.wit")
+            .run();
+        Test::from_program("./example_progs/assertr.simpl").run();
+        Test::from_program("./example_progs/scopes.simpl").run();
+        Test::from_program("./example_progs/nesting.simpl").run();
+        Test::from_program("./example_progs/add.simpl").run();
+        Test::from_program("./example_progs/cat.simpl").run();
+        Test::from_program("./example_progs/match.simpl").run();
+        Test::from_program("./example_progs/array.simpl").run();
+        Test::from_program("./example_progs/list.simpl").run();
+        Test::from_program("./example_progs/function.simf").run();
+        Test::from_program("./example_progs/list_fold.simf").run();
+        Test::from_program("./example_progs/for_while.simf").run();
     }
 
-    fn _test_progs(file: &str) {
-        let program_str = Arc::from(std::fs::read_to_string(file).unwrap());
-        let simplicity_prog = compile_named(program_str).unwrap();
+    struct Test {
+        program_str: Arc<str>,
+        witness: Option<Witness>,
+    }
 
-        struct MyConverter;
-
-        impl Converter<Named<Commit<Elements>>, Redeem<Elements>> for MyConverter {
-            type Error = ();
-
-            fn convert_witness(
-                &mut self,
-                _data: &PostOrderIterItem<&NamedCommitNode>,
-                _witness: &<Named<Commit<Elements>> as simplicity::node::Marker>::Witness,
-            ) -> Result<<Redeem<Elements> as simplicity::node::Marker>::Witness, Self::Error>
-            {
-                Ok(Value::u32(20))
-            }
-
-            fn convert_disconnect(
-                &mut self,
-                _data: &PostOrderIterItem<&NamedCommitNode>,
-                _maybe_converted: Option<&Arc<simplicity::node::Node<Redeem<Elements>>>>,
-                _disconnect: &<Named<Commit<Elements>> as simplicity::node::Marker>::Disconnect,
-            ) -> Result<<Redeem<Elements> as simplicity::node::Marker>::Disconnect, Self::Error>
-            {
-                todo!()
-            }
-
-            fn convert_data(
-                &mut self,
-                data: &PostOrderIterItem<&NamedCommitNode>,
-                inner: Inner<
-                    &Arc<simplicity::node::Node<Redeem<Elements>>>,
-                    <Redeem<Elements> as simplicity::node::Marker>::Jet,
-                    &<Redeem<Elements> as simplicity::node::Marker>::Disconnect,
-                    &<Redeem<Elements> as simplicity::node::Marker>::Witness,
-                >,
-            ) -> Result<<Redeem<Elements> as simplicity::node::Marker>::CachedData, Self::Error>
-            {
-                let converted_data = inner
-                    .map(|node| node.cached_data())
-                    .map_disconnect(|node| node.cached_data())
-                    .map_witness(Arc::clone);
-                Ok(Arc::new(RedeemData::new(
-                    data.node.arrow().shallow_clone(),
-                    converted_data,
-                )))
+    impl Test {
+        pub fn from_program(file: &str) -> Self {
+            let path = std::path::Path::new(file);
+            let program_str = std::fs::read_to_string(path)
+                .map(Arc::<str>::from)
+                .expect("Cannot open program");
+            Self {
+                program_str,
+                witness: None,
             }
         }
 
-        let redeem_prog = simplicity_prog
-            .convert::<NoSharing, Redeem<Elements>, _>(&mut MyConverter)
-            .unwrap();
+        pub fn with_witness(self, file: &str) -> Self {
+            let path = std::path::Path::new(file);
+            let witness_str = std::fs::read_to_string(path).expect("Cannot open witness");
+            let witness = Witness::from_str(&witness_str).expect("Cannot parse witness");
+            Self {
+                program_str: self.program_str,
+                witness: Some(witness),
+            }
+        }
 
-        let mut vec = Vec::new();
-        let mut writer = BitWriter::new(&mut vec);
-        let _encoded = encode::encode_program(&redeem_prog, &mut writer).unwrap();
-        dbg!(&redeem_prog);
-        println!("{}", Base64Display::new(&vec, &STANDARD));
+        pub fn run(self) {
+            let witness = self.witness.unwrap_or_default();
+            let redeem = Compiler::new()
+                .with_program(self.program_str)
+                .with_witness(witness)
+                .get_redeem()
+                .expect("Compile error");
 
-        let mut bit_mac = BitMachine::for_program(&redeem_prog);
-        let env = dummy_env::dummy();
-        bit_mac
-            .exec(&redeem_prog, &env)
-            .expect("Machine execution failure");
+            let mut vec = Vec::new();
+            let mut writer = BitWriter::new(&mut vec);
+            let _encoded = encode::encode_program(&redeem, &mut writer).unwrap();
+            dbg!(&redeem);
+            println!("{}", Base64Display::new(&vec, &STANDARD));
+
+            let mut bit_mac = BitMachine::for_program(&redeem);
+            let env = dummy_env::dummy();
+            bit_mac
+                .exec(&redeem, &env)
+                .expect("Machine execution failure");
+        }
     }
 
     #[test]
