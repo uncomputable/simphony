@@ -13,7 +13,7 @@ use simplicity::Value;
 
 use crate::array::{BTreeSlice, BinaryTree, Partition};
 use crate::error::{Error, RichError, WithSpan};
-use crate::num::NonZeroPow2Usize;
+use crate::num::{DoublePow2Usize, NonZeroPow2Usize};
 use crate::Rule;
 
 /// Area that an object spans inside a file.
@@ -448,6 +448,16 @@ pub enum SingleExpressionInner {
         /// Initial value of the accumulator.
         acc: Arc<Expression>,
         /// Value of the readonly context.
+        ctx: Option<Arc<Expression>>,
+        /// Name of function that is executed in each iteration.
+        name: FunctionName,
+    },
+    ForWhile {
+        /// Inclusive upper bound on number of iterations
+        bound: DoublePow2Usize,
+        /// Initial value of the accumulator
+        acc: Arc<Expression>,
+        /// Value of readonly context.
         ctx: Option<Arc<Expression>>,
         /// Name of function that is executed in each iteration.
         name: FunctionName,
@@ -1182,6 +1192,30 @@ impl PestParse for SingleExpression {
                 SingleExpressionInner::ListFold {
                     bound,
                     list,
+                    acc,
+                    ctx,
+                    name,
+                }
+            }
+            Rule::for_while_expr => {
+                let mut it = inner_pair.into_inner();
+                let bound_pair = it.next().unwrap();
+                let bound = bound_pair
+                    .as_str()
+                    .parse::<DoublePow2Usize>()
+                    .map_err(|_| Error::ForBoundPowPow2)
+                    .with_span(&bound_pair)?;
+                let acc = Expression::parse(it.next().unwrap()).map(Arc::new)?;
+                let (ctx, name) = match (it.next(), it.next()) {
+                    (Some(ctx_pair), Some(name_pair)) => (
+                        Some(Expression::parse(ctx_pair).map(Arc::new)?),
+                        FunctionName::parse(name_pair)?,
+                    ),
+                    (Some(name_pair), None) => (None, FunctionName::parse(name_pair)?),
+                    _ => panic!("Corrupt grammar"),
+                };
+                SingleExpressionInner::ForWhile {
+                    bound,
                     acc,
                     ctx,
                     name,

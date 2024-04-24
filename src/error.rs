@@ -119,6 +119,7 @@ impl From<pest::error::Error<Rule>> for RichError {
 pub enum Error {
     ArraySizeZero,
     ListBoundPow2,
+    ForBoundPowPow2,
     BitStringPow2,
     HexStringPow2,
     CannotParse(String),
@@ -144,6 +145,10 @@ impl fmt::Display for Error {
             Error::ListBoundPow2 => write!(
                 f,
                 "List bound must be a power of two greater one: 2, 4, 8, 16, 32, ..."
+            ),
+            Error::ForBoundPowPow2 => write!(
+                f,
+                "Iteration bound must be a power _of a power_ of two: 2, 4, 16, 256, 65536, ..."
             ),
             Error::BitStringPow2 => write!(
                 f,

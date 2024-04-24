@@ -298,6 +298,7 @@ impl SingleExpressionInner {
 
                 ProgNode::comp(args_expr, fold_expr).with_span(span)?
             }
+            SingleExpressionInner::ForWhile { .. } => todo!(),
         };
         if let Some(reqd_ty) = reqd_ty {
             expr.arrow()
